@@ -51,6 +51,9 @@
  *  ----------------
  */
 
+//block[0] == header
+//block[block_size(block)+1] == footer
+
 // Align p to a multiple of w bytes
 static inline void* align(const void const* p, unsigned char w) {
     return (void*)(((uintptr_t)(p) + (w-1)) & ~(w-1));
@@ -124,6 +127,41 @@ static inline uint32_t* block_next(uint32_t* const block) {
     REQUIRES(in_heap(block));
 
     return block + block_size(block) + 1;
+}
+
+
+
+//Read value at address
+static inline uint32_t getValAtPtr(uint32_t* const ptr ){
+    REQUIRES(ptr != NULL);
+    
+    uint32_t value;
+    
+    value = (*ptr);
+    
+    return value;
+    
+}
+
+//Write value to address [
+static inline void setValAtPtr(uint32_t* const ptr, int value ){
+    
+    REQUIRES(ptr != NULL);
+    REQUIRES(value < (1<<29));
+    
+    *ptr = value;
+    
+}
+
+
+//Generate header and footer content
+static inline uint32_t pack(int size,int allocated){
+    REQUIRES(size < (1<<29));
+    REQUIRES(allocated == 1 || allocated == 0);
+    
+    int headfootValue = (allocated<<30) | (size >> 3);
+    return headfootValue;
+    
 }
 
 
