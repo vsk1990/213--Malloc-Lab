@@ -46,6 +46,8 @@
 #define checkheap(...)
 #endif
 
+
+
 /*
  *  Helper functions
  *  ----------------
@@ -147,7 +149,7 @@ static inline uint32_t getValAtPtr(uint32_t* const ptr ){
 static inline void setValAtPtr(uint32_t* const ptr, int value ){
     
     REQUIRES(ptr != NULL);
-    REQUIRES(value < (1<<29));
+    ;
     
     *ptr = value;
     
@@ -156,7 +158,7 @@ static inline void setValAtPtr(uint32_t* const ptr, int value ){
 
 //Generate header and footer content
 static inline uint32_t pack(int size,int allocated){
-    REQUIRES(size < (1<<29));
+    
     REQUIRES(allocated == 1 || allocated == 0);
     
     int headfootValue = (allocated<<30) | (size >> 3);
@@ -175,6 +177,8 @@ static inline uint32_t pack(int size,int allocated){
  * Initialize: return -1 on error, 0 on success.
  */
 int mm_init(void) {
+    
+    
     return 0;
 }
 
