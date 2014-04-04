@@ -46,8 +46,17 @@
 #define checkheap(...)
 #endif
 
+//Set word and double wordSize
+#define WORDSIZE 4
+#define DOUBLEWORDSIZE 8
+#define ALLOCATED 1
+#define FREE 0
+#define CHUNKSIZE 1<<16
 
-
+static uint32_t* heap_listp;
+static void *coalesce (void *blockPtr);
+static void *extend_heap(uint32_t words);
+static void block_place(uint32_t *blockPtr, uint32_t checkSize);
 /*
  *  Helper functions
  *  ----------------
@@ -62,7 +71,7 @@ static inline void* align(const void const* p, unsigned char w) {
 }
 
 // Check if the given pointer is 8-byte aligned
-static inline int aligned(const void const* p) {
+static inline int aligned(const void const *p) {
     return align(p, 8) == p;
 }
 
@@ -134,7 +143,7 @@ static inline uint32_t* block_next(uint32_t* const block) {
 
 
 //Read value at address
-static inline uint32_t getValAtPtr(uint32_t* const ptr ){
+static inline uint32_t block_getValAtPtr(uint32_t* const ptr ){
     REQUIRES(ptr != NULL);
     
     uint32_t value;
@@ -145,11 +154,10 @@ static inline uint32_t getValAtPtr(uint32_t* const ptr ){
     
 }
 
-//Write value to address [
-static inline void setValAtPtr(uint32_t* const ptr, int value ){
+//Write value to address
+static inline void block_setValAtPtr(uint32_t* const ptr, int value ){
     
     REQUIRES(ptr != NULL);
-    ;
     
     *ptr = value;
     
@@ -157,7 +165,7 @@ static inline void setValAtPtr(uint32_t* const ptr, int value ){
 
 
 //Generate header and footer content
-static inline uint32_t pack(int size,int allocated){
+static inline uint32_t block_pack(int size,int allocated){
     
     REQUIRES(allocated == 1 || allocated == 0);
     
@@ -178,27 +186,204 @@ static inline uint32_t pack(int size,int allocated){
  */
 int mm_init(void) {
     
+    if((heap_listp = mem_sbrk(4 * WORDSIZE)) == (void *) -1){
+        return -1;
+    }
+    block_setValAtPtr(heap_listp, 0);
+    block_setValAtPtr(heap_listp + 1, block_pack(DOUBLEWORDSIZE, ALLOCATED));
+    block_setValAtPtr(heap_listp + 2 , block_pack(DOUBLEWORDSIZE, ALLOCATED));
+    block_setValAtPtr(heap_listp + 3, block_pack(0, ALLOCATED));
+    heap_listp++;
+    heap_listp++;
     
+    if((uint32_t *)extend_heap(CHUNKSIZE/WORDSIZE) == NULL){
+        return -1;
+    }
     return 0;
 }
+
+
+static void *extend_heap(uint32_t words){
+    uint32_t *blockPtr;
+    uint32_t *nextBlock;
+    uint32_t *result;
+    
+    //For allocation of even number of words in a heap
+    uint32_t size = (words %2) ? (words+1) * WORDSIZE : words * WORDSIZE;
+    
+    if((uint32_t)(blockPtr = mem_sbrk(size)) == -1){
+        return NULL;
+    }
+    // Initialize free block header footer and epilogue
+    block_setValAtPtr(&blockPtr[0], block_pack(size, FREE)); //free block header
+    block_setValAtPtr(&blockPtr[block_size(blockPtr) - 1], block_pack(size, FREE)); //free
+                                                                //block footer
+
+    nextBlock = block_next(blockPtr);
+    
+    //Set epilogue block with no size as Allocated
+    block_setValAtPtr(&nextBlock[0], block_pack(0,ALLOCATED));
+    
+    //if previous block was free coalesce
+    result = (uint32_t *)coalesce(blockPtr);
+    return result;
+}
+
+
+
+static void *coalesce (void *blockPtr){
+    
+    REQUIRES(blockPtr!=NULL);
+    
+    uint32_t isPreviousFree = block_free(block_prev((uint32_t *)blockPtr));
+    uint32_t isNextFree = block_free(block_next((uint32_t *)blockPtr));
+    uint32_t size = block_size(blockPtr);
+    
+    if(!isPreviousFree && !isNextFree){
+        return blockPtr;
+    }
+    else if(!isPreviousFree && isNextFree) {
+        
+        uint32_t *nextPtr  = block_next(blockPtr);
+        size = size + block_size(nextPtr);
+        block_setValAtPtr(&blockPtr[0], block_pack(size, FREE));
+        block_setValAtPtr(&blockPtr[size-1], block_pack(size, FREE));
+        
+        
+    }
+    
+    else if(isPreviousFree && !isNextFree){
+    
+        uint32_t *prevPtr  =   block_prev(blockPtr);
+        size = size + block_size(prevPtr);
+        block_setValAtPtr(&prevPtr[0], block_pack(size, FREE));
+        block_setValAtPtr(&prevPtr[size-1], block_pack(size, FREE));
+        
+
+    }
+    
+    else if(isPreviousFree && isNextFree){
+        
+       uint32_t *prevPtr  =   block_prev(blockPtr);
+       uint32_t *nextPtr  = block_next(blockPtr);
+       uint32_t sizePrev = block_size(prevPtr);
+       uint32_t sizeNext = block_size(nextPtr);
+        size += sizeNext+sizePrev;
+        block_setValAtPtr(&prevPtr[0], block_pack(size, FREE));
+        block_setValAtPtr(&nextPtr[size-1], FREE);
+    
+    
+    }
+    
+    return blockPtr;
+}
+
+/*
+ * Find fit
+ */
+
+void *find_fit(uint32_t size){
+
+    uint32_t *traverser = ++heap_listp;
+    uint32_t freeSize = block_size(traverser);
+    uint32_t isFree = block_free(traverser);
+    while((freeSize!=size) || traverser != NULL){
+        if(isFree && size <= freeSize - 2){
+            
+            return traverser;
+        
+        }
+        traverser = block_next(traverser);
+        isFree = block_free(traverser);
+    }
+    
+    return NULL;
+}
+
 
 /*
  * malloc
  */
 void *malloc (size_t size) {
     checkheap(1);  // Let's make sure the heap is ok!
-    size = size;
-    return NULL;
+    uint32_t usize = (uint32_t)size;
+    uint32_t checkSize;
+    uint32_t extendHeapSize;
+    uint32_t *blockPtr;
+    
+    if(size == 0){
+        return NULL;
+    }
+    
+    else if(size<=DOUBLEWORDSIZE){
+        checkSize = DOUBLEWORDSIZE * 2;
+        
+    }
+    else{
+        
+        checkSize = DOUBLEWORDSIZE *((usize + (DOUBLEWORDSIZE) +(DOUBLEWORDSIZE-1))/DOUBLEWORDSIZE);
+        
+    }
+    
+    //Search the free list for a fit
+    if ((blockPtr = find_fit(checkSize))!=NULL) {
+        
+        block_place(blockPtr,checkSize);
+        return blockPtr;
+    }
+    
+    //If no fit found
+    extendHeapSize = checkSize > CHUNKSIZE? checkSize : CHUNKSIZE;
+    if((blockPtr = extend_heap(extendHeapSize/WORDSIZE)) == NULL){
+        
+        return NULL;
+        
+    }
+    
+    block_place(blockPtr,checkSize);
+    return blockPtr;
+    
 }
+
+void block_place(uint32_t *blockPtr, uint32_t checkSize){
+    uint32_t freeSize = block_size(blockPtr);
+    block_setValAtPtr(&blockPtr[0], block_pack(checkSize+2, ALLOCATED));
+    block_setValAtPtr(&blockPtr[checkSize +1], block_pack(checkSize+2, ALLOCATED));
+   
+    if(freeSize - checkSize==1){
+        
+        block_setValAtPtr(&blockPtr[checkSize +2], block_pack(0, ALLOCATED));
+        
+    }
+    else if(freeSize - checkSize == 2){
+    
+        block_setValAtPtr(&blockPtr[checkSize +2], block_pack(0, ALLOCATED));
+        block_setValAtPtr(&blockPtr[checkSize +3], block_pack(0, ALLOCATED));
+    
+    }
+    
+    else if (freeSize - checkSize > 2){
+        
+        block_setValAtPtr(&blockPtr[checkSize +2], block_pack(freeSize-checkSize, FREE));
+        
+    }
+}
+
 
 /*
  * free
  */
 void free (void *ptr) {
-    if (ptr == NULL) {
-        return;
-    }
+    
+    REQUIRES(ptr!=NULL);
+    uint32_t size = block_size(ptr);
+    block_setValAtPtr(&ptr[0], block_pack(size, FREE));
+    block_setValAtPtr(&ptr[size - 1], block_pack(size, FREE));
+    coalesce(ptr);
+
 }
+
+
 
 /*
  * realloc - you may want to look at mm-naive.c
@@ -209,6 +394,8 @@ void *realloc(void *oldptr, size_t size) {
     return NULL;
 }
 
+
+
 /*
  * calloc - you may want to look at mm-naive.c
  */
@@ -217,6 +404,7 @@ void *calloc (size_t nmemb, size_t size) {
     size = size;
     return NULL;
 }
+
 
 // Returns 0 if no errors were found, otherwise returns the error
 int mm_checkheap(int verbose) {
