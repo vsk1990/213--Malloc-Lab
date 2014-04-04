@@ -53,6 +53,11 @@
 #define FREE 0
 #define CHUNKSIZE 1<<16
 
+//remove after complete implementation
+#define SIZE_PTR(p)  ((size_t*)(((char*)(p)) - SIZE_T_SIZE))
+#define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
+
+
 static uint32_t* heap_listp;
 static void *coalesce (void *blockPtr);
 static void *extend_heap(uint32_t words);
@@ -169,7 +174,7 @@ static inline uint32_t block_pack(int size,int allocated){
     
     REQUIRES(allocated == 1 || allocated == 0);
     
-    int headfootValue = (allocated<<30) | (size >> 3);
+    int headfootValue = (allocated<<30) | (size);
     return headfootValue;
     
 }
@@ -190,8 +195,8 @@ int mm_init(void) {
         return -1;
     }
     block_setValAtPtr(heap_listp, 0);
-    block_setValAtPtr(heap_listp + 1, block_pack(DOUBLEWORDSIZE, ALLOCATED));
-    block_setValAtPtr(heap_listp + 2 , block_pack(DOUBLEWORDSIZE, ALLOCATED));
+    block_setValAtPtr(heap_listp + 1, block_pack(DOUBLEWORDSIZE/WORDSIZE, ALLOCATED));
+    block_setValAtPtr(heap_listp + 2 , block_pack(DOUBLEWORDSIZE/WORDSIZE, ALLOCATED));
     block_setValAtPtr(heap_listp + 3, block_pack(0, ALLOCATED));
     heap_listp++;
     heap_listp++;
@@ -215,8 +220,8 @@ static void *extend_heap(uint32_t words){
         return NULL;
     }
     // Initialize free block header footer and epilogue
-    block_setValAtPtr(&blockPtr[0], block_pack(size, FREE)); //free block header
-    block_setValAtPtr(&blockPtr[block_size(blockPtr) - 1], block_pack(size, FREE)); //free
+    block_setValAtPtr(&blockPtr[0], block_pack(size/WORDSIZE, FREE)); //free block header
+    block_setValAtPtr(&blockPtr[block_size(blockPtr) - 1], block_pack(size/WORDSIZE, FREE)); //free
                                                                 //block footer
 
     nextBlock = block_next(blockPtr);
@@ -283,12 +288,12 @@ static void *coalesce (void *blockPtr){
  */
 
 void *find_fit(uint32_t size){
-
+    uint32_t wSize = size/WORDSIZE;
     uint32_t *traverser = ++heap_listp;
     uint32_t freeSize = block_size(traverser);
     uint32_t isFree = block_free(traverser);
-    while((freeSize!=size) || traverser != NULL){
-        if(isFree && size <= freeSize - 2){
+    while((freeSize!=wSize) || traverser != NULL){
+        if(isFree && wSize <= freeSize - 2){
             
             return traverser;
         
@@ -345,28 +350,30 @@ void *malloc (size_t size) {
     
 }
 
-void block_place(uint32_t *blockPtr, uint32_t checkSize){
+void block_place(uint32_t *blockPtr, uint32_t chkSize){
+    
     uint32_t freeSize = block_size(blockPtr);
+    uint32_t checkSize = chkSize/WORDSIZE;
     block_setValAtPtr(&blockPtr[0], block_pack(checkSize+2, ALLOCATED));
     block_setValAtPtr(&blockPtr[checkSize +1], block_pack(checkSize+2, ALLOCATED));
-   
-    if(freeSize - checkSize==1){
+    
+    if((freeSize - checkSize-2)==1){
         
         block_setValAtPtr(&blockPtr[checkSize +2], block_pack(0, ALLOCATED));
         
     }
-    else if(freeSize - checkSize == 2){
-    
+    else if((freeSize - checkSize - 2) == 2){
         block_setValAtPtr(&blockPtr[checkSize +2], block_pack(0, ALLOCATED));
         block_setValAtPtr(&blockPtr[checkSize +3], block_pack(0, ALLOCATED));
-    
-    }
-    
-    else if (freeSize - checkSize > 2){
-        
-        block_setValAtPtr(&blockPtr[checkSize +2], block_pack(freeSize-checkSize, FREE));
         
     }
+    
+    else if (freeSize - checkSize - 2 > 2){
+        
+        block_setValAtPtr(&blockPtr[checkSize +2], block_pack(freeSize-checkSize - 2, FREE));
+        
+    }
+    
 }
 
 
@@ -389,9 +396,36 @@ void free (void *ptr) {
  * realloc - you may want to look at mm-naive.c
  */
 void *realloc(void *oldptr, size_t size) {
-    oldptr = oldptr;
-    size = size;
-    return NULL;
+    size_t oldsize;
+    void *newptr;
+    
+    /* If size == 0 then this is just free, and we return NULL. */
+    if(size == 0) {
+        free(oldptr);
+        return 0;
+    }
+    
+    /* If oldptr is NULL, then this is just malloc. */
+    if(oldptr == NULL) {
+        return malloc(size);
+    }
+    
+    newptr = malloc(size);
+    
+    /* If realloc() fails the original block is left untouched  */
+    if(!newptr) {
+        return 0;
+    }
+    
+    /* Copy the old data. */
+    oldsize = *SIZE_PTR(oldptr);
+    if(size < oldsize) oldsize = size;
+    memcpy(newptr, oldptr, oldsize);
+    
+    /* Free the old block. */
+    free(oldptr);
+    
+    return newptr;
 }
 
 
@@ -400,9 +434,13 @@ void *realloc(void *oldptr, size_t size) {
  * calloc - you may want to look at mm-naive.c
  */
 void *calloc (size_t nmemb, size_t size) {
-    nmemb = nmemb;
-    size = size;
-    return NULL;
+    size_t bytes = nmemb * size;
+    void *newptr;
+    
+    newptr = malloc(bytes);
+    memset(newptr, 0, bytes);
+    
+    return newptr;
 }
 
 
