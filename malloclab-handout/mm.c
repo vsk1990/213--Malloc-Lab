@@ -132,6 +132,7 @@ static inline int block_free(const uint32_t* block) {
     }
     
     return !(block[0] & 0x40000000);
+
 }
 
 // Mark the given block as free(1)/alloced(0) by marking the header and footer.
@@ -278,7 +279,9 @@ int mm_init(void) {
     dbg_printf("\nMM_INIT \n");
     
     if((heap_listp = mem_sbrk(4 * WORDSIZE)) == (void *) -1){
+        
         return -1;
+    
     }
     
     block_setValAtPtr(heap_listp,block_pack(1, ALLOCATED));
@@ -474,7 +477,7 @@ void *malloc (size_t size) {
     }
     else{
         
-        checkSize = DOUBLEWORDSIZE *((usize + (DOUBLEWORDSIZE) +(DOUBLEWORDSIZE-1))/DOUBLEWORDSIZE);
+        checkSize = (DOUBLEWORDSIZE *((usize + (DOUBLEWORDSIZE) +(DOUBLEWORDSIZE-1))/DOUBLEWORDSIZE)) -8;
         
     }
     
